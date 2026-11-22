@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "http.h"
+#include "favicon.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -28,6 +29,214 @@
 #define HTTP_IDLE_TIMEOUT_MS UINT64_C(30000)
 #define HTTP_REQUEST_TIMEOUT_MS UINT64_C(30000)
 #define HTTP_POLL_TIMEOUT_MS 1000
+
+static const char swagger_html[] =
+    "<!doctype html>\n"
+    "<html lang=\"en\">\n"
+    "<head>\n"
+    "  <meta charset=\"utf-8\">\n"
+    "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+    "  <title>keyjson API documentation</title>\n"
+    "  <link rel=\"icon\" href=\"/favicon.ico\" type=\"image/x-icon\">\n"
+    "  <link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/"
+    "swagger-ui-dist@5/swagger-ui.css\">\n"
+    "</head>\n"
+    "<body>\n"
+    "  <div id=\"swagger-ui\"></div>\n"
+    "  <script src=\"https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/"
+    "swagger-ui-bundle.js\"></script>\n"
+    "  <script src=\"https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/"
+    "swagger-ui-standalone-preset.js\"></script>\n"
+    "  <script>\n"
+    "    window.ui = SwaggerUIBundle({\n"
+    "      url: \"/openapi.json\",\n"
+    "      dom_id: \"#swagger-ui\",\n"
+    "      deepLinking: true,\n"
+    "      presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],\n"
+    "      layout: \"StandaloneLayout\"\n"
+    "    });\n"
+    "  </script>\n"
+    "</body>\n"
+    "</html>\n";
+
+static const char openapi_spec[] =
+    "{\n"
+    "  \"openapi\": \"3.0.3\",\n"
+    "  \"info\": {\"title\": \"keyjson API\", \"version\": \"0.1.0\", "
+    "\"description\": \"In-memory JSON key-value REST API.\"},\n"
+    "  \"servers\": [{\"url\": \"/\"}],\n"
+    "  \"paths\": {\n"
+    "    \"/docs\": {\n"
+    "      \"get\": {\n"
+    "        \"summary\": \"Interactive API documentation\",\n"
+    "        \"responses\": {\n"
+    "          \"200\": {\"description\": \"Swagger UI page\", "
+    "\"content\": {\"text/html\": {\"schema\": {\"type\": "
+    "\"string\"}}}},\n"
+    "          \"400\": {\"$ref\": \"#/components/responses/BadRequest\"},\n"
+    "          \"405\": {\"$ref\": "
+    "\"#/components/responses/MethodNotAllowed\"}\n"
+    "        }\n"
+    "      }\n"
+    "    },\n"
+    "    \"/openapi.json\": {\n"
+    "      \"get\": {\n"
+    "        \"summary\": \"OpenAPI specification\",\n"
+    "        \"responses\": {\n"
+    "          \"200\": {\"description\": \"OpenAPI document\", "
+    "\"content\": {\"application/json\": {\"schema\": "
+    "{\"type\": \"object\"}}}},\n"
+    "          \"400\": {\"$ref\": \"#/components/responses/BadRequest\"},\n"
+    "          \"405\": {\"$ref\": "
+    "\"#/components/responses/MethodNotAllowed\"}\n"
+    "        }\n"
+    "      }\n"
+    "    },\n"
+    "    \"/keys\": {\n"
+    "      \"get\": {\n"
+    "        \"summary\": \"List keys\",\n"
+    "        \"responses\": {\n"
+    "          \"200\": {\"description\": \"Key names; order is "
+    "unspecified\", \"content\": {\"application/json\": "
+    "{\"schema\": {\"type\": \"array\", \"items\": "
+    "{\"type\": \"string\"}}}}},\n"
+    "          \"400\": {\"$ref\": \"#/components/responses/BadRequest\"},\n"
+    "          \"405\": {\"$ref\": "
+    "\"#/components/responses/MethodNotAllowed\"},\n"
+    "          \"500\": {\"$ref\": "
+    "\"#/components/responses/InternalError\"}\n"
+    "        }\n"
+    "      }\n"
+    "    },\n"
+    "    \"/stats\": {\n"
+    "      \"get\": {\n"
+    "        \"summary\": \"Read store statistics\",\n"
+    "        \"responses\": {\n"
+    "          \"200\": {\"description\": \"Store statistics\", "
+    "\"content\": {\"application/json\": {\"schema\": "
+    "{\"$ref\": \"#/components/schemas/Stats\"}}}},\n"
+    "          \"400\": {\"$ref\": \"#/components/responses/BadRequest\"},\n"
+    "          \"405\": {\"$ref\": "
+    "\"#/components/responses/MethodNotAllowed\"},\n"
+    "          \"500\": {\"$ref\": "
+    "\"#/components/responses/InternalError\"}\n"
+    "        }\n"
+    "      }\n"
+    "    },\n"
+    "    \"/keys/{key}\": {\n"
+    "      \"parameters\": [{\n"
+    "        \"name\": \"key\", \"in\": \"path\", \"required\": true,\n"
+    "        \"description\": \"UTF-8 key of 1 to 1024 bytes; "
+    "percent-encode reserved characters.\",\n"
+    "        \"schema\": {\"type\": \"string\", \"minLength\": 1, "
+    "\"maxLength\": 1024}\n"
+    "      }],\n"
+    "      \"put\": {\n"
+    "        \"summary\": \"Create or replace a JSON value\",\n"
+    "        \"parameters\": [{\n"
+    "          \"name\": \"X-TTL-Seconds\", \"in\": \"header\", "
+    "\"required\": false,\n"
+    "          \"description\": \"Optional positive decimal TTL in "
+    "seconds; omission leaves the key permanent and clears an old TTL.\",\n"
+    "          \"schema\": {\"type\": \"integer\", \"minimum\": 1}\n"
+    "        }],\n"
+    "        \"requestBody\": {\"required\": true, \"content\": "
+    "{\"application/json\": {\"schema\": {}, \"example\": "
+    "{\"message\": \"hello\"}}}},\n"
+    "        \"responses\": {\n"
+    "          \"200\": {\"description\": \"Existing value updated\", "
+    "\"content\": {\"application/json\": {\"schema\": "
+    "{\"$ref\": \"#/components/schemas/PutResult\"}}}},\n"
+    "          \"201\": {\"description\": \"Key created\", "
+    "\"content\": {\"application/json\": {\"schema\": "
+    "{\"$ref\": \"#/components/schemas/PutResult\"}}}},\n"
+    "          \"400\": {\"$ref\": \"#/components/responses/BadRequest\"},\n"
+    "          \"405\": {\"$ref\": "
+    "\"#/components/responses/MethodNotAllowed\"},\n"
+    "          \"413\": {\"$ref\": "
+    "\"#/components/responses/PayloadTooLarge\"},\n"
+    "          \"415\": {\"$ref\": "
+    "\"#/components/responses/UnsupportedMediaType\"},\n"
+    "          \"500\": {\"$ref\": "
+    "\"#/components/responses/InternalError\"}\n"
+    "        }\n"
+    "      },\n"
+    "      \"get\": {\n"
+    "        \"summary\": \"Get a JSON value\",\n"
+    "        \"responses\": {\n"
+    "          \"200\": {\"description\": \"Stored JSON value\", "
+    "\"content\": {\"application/json\": {\"schema\": {}}}},\n"
+    "          \"400\": {\"$ref\": \"#/components/responses/BadRequest\"},\n"
+    "          \"404\": {\"$ref\": \"#/components/responses/NotFound\"},\n"
+    "          \"405\": {\"$ref\": "
+    "\"#/components/responses/MethodNotAllowed\"},\n"
+    "          \"500\": {\"$ref\": "
+    "\"#/components/responses/InternalError\"}\n"
+    "        }\n"
+    "      },\n"
+    "      \"delete\": {\n"
+    "        \"summary\": \"Delete a key\",\n"
+    "        \"responses\": {\n"
+    "          \"200\": {\"description\": \"Key deleted\", "
+    "\"content\": {\"application/json\": {\"schema\": "
+    "{\"$ref\": \"#/components/schemas/DeleteResult\"}}}},\n"
+    "          \"400\": {\"$ref\": \"#/components/responses/BadRequest\"},\n"
+    "          \"404\": {\"$ref\": \"#/components/responses/NotFound\"},\n"
+    "          \"405\": {\"$ref\": "
+    "\"#/components/responses/MethodNotAllowed\"},\n"
+    "          \"500\": {\"$ref\": "
+    "\"#/components/responses/InternalError\"}\n"
+    "        }\n"
+    "      }\n"
+    "    }\n"
+    "  },\n"
+    "  \"components\": {\n"
+    "    \"schemas\": {\n"
+    "      \"Error\": {\"type\": \"object\", \"required\": [\"error\"], "
+    "\"properties\": {\"error\": {\"type\": \"string\"}}},\n"
+    "      \"PutResult\": {\"type\": \"object\", \"required\": "
+    "[\"created\"], \"properties\": {\"created\": {\"type\": "
+    "\"boolean\"}}},\n"
+    "      \"DeleteResult\": {\"type\": \"object\", \"required\": "
+    "[\"deleted\"], \"properties\": {\"deleted\": {\"type\": "
+    "\"boolean\"}}},\n"
+    "      \"Stats\": {\"type\": \"object\",\n"
+    "        \"required\": [\"keys\", \"capacity\", \"stored_bytes\", "
+    "\"sets\", \"gets\", \"deletes\"],\n"
+    "        \"properties\": {\n"
+    "          \"keys\": {\"type\": \"integer\", \"minimum\": 0},\n"
+    "          \"capacity\": {\"type\": \"integer\", \"minimum\": 0},\n"
+    "          \"stored_bytes\": {\"type\": \"integer\", \"minimum\": 0},\n"
+    "          \"sets\": {\"type\": \"integer\", \"minimum\": 0},\n"
+    "          \"gets\": {\"type\": \"integer\", \"minimum\": 0},\n"
+    "          \"deletes\": {\"type\": \"integer\", \"minimum\": 0}\n"
+    "        }\n"
+    "      }\n"
+    "    },\n"
+    "    \"responses\": {\n"
+    "      \"BadRequest\": {\"description\": \"Invalid request\", "
+    "\"content\": {\"application/json\": {\"schema\": "
+    "{\"$ref\": \"#/components/schemas/Error\"}}}},\n"
+    "      \"NotFound\": {\"description\": \"Key not found\", "
+    "\"content\": {\"application/json\": {\"schema\": "
+    "{\"$ref\": \"#/components/schemas/Error\"}}}},\n"
+    "      \"MethodNotAllowed\": {\"description\": \"Method not allowed\", "
+    "\"headers\": {\"Allow\": {\"description\": \"Allowed methods\", "
+    "\"schema\": {\"type\": \"string\"}}}, \"content\": "
+    "{\"application/json\": {\"schema\": "
+    "{\"$ref\": \"#/components/schemas/Error\"}}}},\n"
+    "      \"PayloadTooLarge\": {\"description\": \"Request body exceeds "
+    "1 MiB\", \"content\": {\"application/json\": {\"schema\": "
+    "{\"$ref\": \"#/components/schemas/Error\"}}}},\n"
+    "      \"UnsupportedMediaType\": {\"description\": \"Content-Type "
+    "must be application/json\", \"content\": {\"application/json\": "
+    "{\"schema\": {\"$ref\": \"#/components/schemas/Error\"}}}},\n"
+    "      \"InternalError\": {\"description\": \"Internal server error\", "
+    "\"content\": {\"application/json\": {\"schema\": "
+    "{\"$ref\": \"#/components/schemas/Error\"}}}}\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
 
 static volatile sig_atomic_t server_stopping;
 
@@ -493,35 +702,38 @@ static const char *status_reason(int status) {
     }
 }
 
-static bool queue_response(http_client *client,
-                           int status,
-                           const char *body,
+static bool queue_response_with_type(http_client *client,
+                                     int status,
+                                     const char *content_type,
+                                     const char *body,
                            size_t body_len,
                            bool keep_alive,
                            const char *allow) {
     char header[512];
     int header_len;
-    if (client->output != NULL || (body_len > 0U && body == NULL)) {
+    if (content_type == NULL || client->output != NULL ||
+        (body_len > 0U && body == NULL)) {
         client->close_after_write = true;
         return false;
     }
     if (allow == NULL) {
         header_len = snprintf(header, sizeof(header),
                               "HTTP/1.1 %d %s\r\n"
-                              "Content-Type: application/json; charset=utf-8\r\n"
+                              "Content-Type: %s\r\n"
                               "Content-Length: %zu\r\n"
                               "Connection: %s\r\n\r\n",
-                              status, status_reason(status), body_len,
-                              keep_alive ? "keep-alive" : "close");
+                              status, status_reason(status), content_type,
+                              body_len, keep_alive ? "keep-alive" : "close");
     } else {
         header_len = snprintf(header, sizeof(header),
                               "HTTP/1.1 %d %s\r\n"
-                              "Content-Type: application/json; charset=utf-8\r\n"
+                              "Content-Type: %s\r\n"
                               "Content-Length: %zu\r\n"
                               "Connection: %s\r\n"
                               "Allow: %s\r\n\r\n",
-                              status, status_reason(status), body_len,
-                              keep_alive ? "keep-alive" : "close", allow);
+                              status, status_reason(status), content_type,
+                              body_len, keep_alive ? "keep-alive" : "close",
+                              allow);
     }
     if (header_len < 0 || (size_t)header_len >= sizeof(header) ||
         (size_t)header_len > SIZE_MAX - body_len) {
@@ -546,6 +758,17 @@ static bool queue_response(http_client *client,
     client->close_after_write = !keep_alive;
     client->last_activity_ms = monotonic_millis();
     return true;
+}
+
+static bool queue_response(http_client *client,
+                           int status,
+                           const char *body,
+                           size_t body_len,
+                           bool keep_alive,
+                           const char *allow) {
+    return queue_response_with_type(client, status,
+                                    "application/json; charset=utf-8", body,
+                                    body_len, keep_alive, allow);
 }
 
 static char *serialize_mutable(yyjson_mut_doc *doc,
@@ -924,6 +1147,38 @@ static void handle_request(http_client *client,
     if (memchr(request->target, '?', request->target_len) != NULL) {
         respond_error(client, 400, "query_strings_not_supported",
                       request->keep_alive, NULL);
+        return;
+    }
+    if (span_equal(request->target, request->target_len, "/favicon.ico")) {
+        if (!is_get(request)) {
+            respond_method_not_allowed(client, request, "GET");
+            return;
+        }
+        (void)queue_response_with_type(
+            client, 200, "image/x-icon", (const char *)keyjson_favicon_ico,
+            sizeof(keyjson_favicon_ico), request->keep_alive, NULL);
+        return;
+    }
+    if (span_equal(request->target, request->target_len, "/docs") ||
+        span_equal(request->target, request->target_len, "/docs/")) {
+        if (!is_get(request)) {
+            respond_method_not_allowed(client, request, "GET");
+            return;
+        }
+        (void)queue_response_with_type(client, 200,
+                                       "text/html; charset=utf-8", swagger_html,
+                                       sizeof(swagger_html) - 1U,
+                                       request->keep_alive, NULL);
+        return;
+    }
+    if (span_equal(request->target, request->target_len, "/openapi.json")) {
+        if (!is_get(request)) {
+            respond_method_not_allowed(client, request, "GET");
+            return;
+        }
+        (void)queue_response(client, 200, openapi_spec,
+                             sizeof(openapi_spec) - 1U,
+                             request->keep_alive, NULL);
         return;
     }
     if (span_equal(request->target, request->target_len, "/keys")) {

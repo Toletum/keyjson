@@ -14,7 +14,7 @@
 #include <unistd.h>
 
 #define DEFAULT_TEST_PORT 8080U
-#define RESPONSE_BUFFER_SIZE 4096U
+#define RESPONSE_BUFFER_SIZE 16384U
 #define STRESS_THREAD_COUNT 8U
 #define STRESS_REQUESTS_PER_THREAD 100U
 
@@ -235,7 +235,10 @@ static bool parse_content_length(const char *data,
     return found;
 }
 
-static bool receive_response(test_client *client, int *status) {
+static bool receive_response_details(test_client *client,
+                                     int *status,
+                                     size_t *header_length_out,
+                                     size_t *body_length_out) {
     size_t separator = find_header_separator(client->buffer, client->length);
     size_t content_length = 0;
     size_t header_len;
@@ -270,6 +273,12 @@ static bool receive_response(test_client *client, int *status) {
         return false;
     }
     expected_len = header_len + content_length;
+    if (header_length_out != NULL) {
+        *header_length_out = header_len;
+    }
+    if (body_length_out != NULL) {
+        *body_length_out = content_length;
+    }
     if (client->length > expected_len) {
         memmove(client->buffer, client->buffer + expected_len,
                 client->length - expected_len);
@@ -290,6 +299,10 @@ static bool receive_response(test_client *client, int *status) {
         client->length = 0;
     }
     return true;
+}
+
+static bool receive_response(test_client *client, int *status) {
+    return receive_response_details(client, status, NULL, NULL);
 }
 
 static bool expect_status(const char *name,
@@ -315,6 +328,143 @@ static bool expect_status(const char *name,
         printf("PASS %s (HTTP %d)\n", name, status);
     }
     return passed;
+}
+
+static bool contains_bytes(const char *data,
+                          size_t data_len,
+                          const char *fragment) {
+    size_t fragment_len = strlen(fragment);
+    if (fragment_len > data_len) {
+        return false;
+    }
+    for (size_t i = 0U; i <= data_len - fragment_len; i++) {
+        if (memcmp(data + i, fragment, fragment_len) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool expect_response_content(const char *name,
+                                    const char *request,
+                                    size_t request_len,
+                                    int expected_status,
+                                    const char *content_type,
+                                    const char *const *body_fragments,
+                                    size_t body_fragment_count) {
+    test_client client;
+    int status = 0;
+    size_t header_len = 0U;
+    size_t body_len = 0U;
+    bool passed = connect_loopback(&client);
+
+    if (passed) {
+        passed = send_all(client.fd, request, request_len) &&
+                 receive_response_details(&client, &status, &header_len,
+                                          &body_len) &&
+                 status == expected_status;
+    }
+    if (passed) {
+        passed = contains_bytes(client.buffer, header_len, content_type);
+        for (size_t i = 0U; passed && i < body_fragment_count; i++) {
+            passed = contains_bytes(client.buffer + header_len, body_len,
+                                    body_fragments[i]);
+        }
+    }
+    close_client(&client);
+    checks_run++;
+    if (!passed) {
+        checks_failed++;
+        fprintf(stderr, "FAIL %-32s expected HTTP %d, received %d\n", name,
+                expected_status, status);
+    } else {
+        printf("PASS %s (HTTP %d, content verified)\n", name, status);
+    }
+    return passed;
+}
+
+static void test_favicon_route(void) {
+    static const char request[] =
+        "GET /favicon.ico HTTP/1.1\r\nHost: localhost\r\n"
+        "Connection: close\r\n\r\n";
+    static const unsigned char ico_header[] = {0U, 0U, 1U, 0U, 1U, 0U};
+    test_client client;
+    int status = 0;
+    size_t header_len = 0U;
+    size_t body_len = 0U;
+    bool passed = connect_loopback(&client);
+
+    if (passed) {
+        passed = send_all(client.fd, request, sizeof(request) - 1U) &&
+                 receive_response_details(&client, &status, &header_len,
+                                          &body_len) &&
+                 status == 200;
+    }
+    if (passed) {
+        passed = contains_bytes(client.buffer, header_len,
+                                "Content-Type: image/x-icon") &&
+                 body_len >= sizeof(ico_header) &&
+                 memcmp(client.buffer + header_len, ico_header,
+                        sizeof(ico_header)) == 0;
+    }
+    close_client(&client);
+    checks_run++;
+    if (!passed) {
+        checks_failed++;
+        fprintf(stderr, "FAIL favicon route expected HTTP 200 and ICO data, "
+                        "received %d\n",
+                status);
+    } else {
+        puts("PASS favicon route (ICO response verified)");
+    }
+}
+
+static void test_documentation_routes(void) {
+    static const char docs_request[] =
+        "GET /docs HTTP/1.1\r\nHost: localhost\r\n"
+        "Connection: close\r\n\r\n";
+    static const char docs_slash_request[] =
+        "GET /docs/ HTTP/1.1\r\nHost: localhost\r\n"
+        "Connection: close\r\n\r\n";
+    static const char openapi_request[] =
+        "GET /openapi.json HTTP/1.1\r\nHost: localhost\r\n"
+        "Connection: close\r\n\r\n";
+    static const char docs_method_not_allowed[] =
+        "POST /docs HTTP/1.1\r\nHost: localhost\r\n"
+        "Content-Length: 0\r\nConnection: close\r\n\r\n";
+    static const char openapi_method_not_allowed[] =
+        "POST /openapi.json HTTP/1.1\r\nHost: localhost\r\n"
+        "Content-Length: 0\r\nConnection: close\r\n\r\n";
+    static const char *const docs_fragments[] = {
+        "swagger-ui-bundle.js", "swagger-ui-standalone-preset.js",
+        "/openapi.json", "/favicon.ico"};
+    static const char *const openapi_fragments[] = {
+        "\"openapi\": \"3.0.3\"", "\"/keys/{key}\"",
+        "X-TTL-Seconds", "\"/stats\""};
+
+    (void)expect_response_content("Swagger UI docs", docs_request,
+                                  sizeof(docs_request) - 1U, 200,
+                                  "Content-Type: text/html; charset=utf-8",
+                                  docs_fragments,
+                                  sizeof(docs_fragments) / sizeof(docs_fragments[0]));
+    (void)expect_response_content("Swagger UI trailing slash",
+                                  docs_slash_request,
+                                  sizeof(docs_slash_request) - 1U, 200,
+                                  "Content-Type: text/html; charset=utf-8",
+                                  docs_fragments,
+                                  sizeof(docs_fragments) / sizeof(docs_fragments[0]));
+    (void)expect_response_content("OpenAPI specification", openapi_request,
+                                  sizeof(openapi_request) - 1U, 200,
+                                  "Content-Type: application/json; charset=utf-8",
+                                  openapi_fragments,
+                                  sizeof(openapi_fragments) /
+                                      sizeof(openapi_fragments[0]));
+    (void)expect_status("docs method not allowed", docs_method_not_allowed,
+                        sizeof(docs_method_not_allowed) - 1U, 405);
+    (void)expect_status("OpenAPI method not allowed",
+                        openapi_method_not_allowed,
+                        sizeof(openapi_method_not_allowed) - 1U, 405);
+    test_favicon_route();
 }
 
 static bool test_keep_alive(void) {
@@ -596,6 +746,7 @@ int main(int argc, char **argv) {
 
     expect_status("valid stats request", valid_stats,
                   sizeof(valid_stats) - 1U, 200);
+    test_documentation_routes();
     expect_status("malformed request line", malformed_line,
                   sizeof(malformed_line) - 1U, 400);
     expect_status("unsupported HTTP version", unsupported_version,
