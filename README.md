@@ -333,6 +333,6 @@ PYTHONPATH=python ./.venv/bin/python -m unittest discover -s python/tests -v
 
 ### Checklist
 
-- [ ] Revisar cambios pendientes y confirmar tests.
-- [ ] Crear commit y subir rama de trabajo.
-- [ ] Crear y verificar el Pull Request.
+- [x] Revisar cambios pendientes y confirmar tests.
+- [x] Crear commit y subir rama de trabajo.
+- [x] Crear y verificar el Pull Request.
