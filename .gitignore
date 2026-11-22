@@ -1,0 +1,34 @@
+# Local virtual environments
+.venv/
+venv/
+
+# Local Podman data and volumes
+.podman/
+podman-data/
+podman-volumes/
+volumes/
+
+# Build outputs
+build/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+/keyjson
+/test-kv
+/test-http
+/core
+core.*
+*.gcda
+*.gcno
+coverage/
+
+# Caches and local tooling
+.cache/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.log
