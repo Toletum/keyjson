@@ -259,11 +259,11 @@ PYTHONPATH=python ./.venv/bin/python -m unittest discover -s python/tests -v
 
 - Crear un repositorio llamado `keyjson`; usar visibilidad privada si no se indica otra.
 - Revisar el estado del repositorio y excluir entornos virtuales, compilados, cachés, secretos y datos locales antes de publicar.
-- Configurar el remoto, crear un commit inicial con los archivos del proyecto y hacer push a la rama principal.
+- Configurar el remoto, crear un commit inicial con los archivos del proyecto y hacer push a la rama principal (`master`).
 
 ### Checklist
 
-- [ ] Confirmar la cuenta autenticada y que el nombre del repositorio está disponible.
-- [ ] Revisar los archivos que se incluirán y evitar publicar secretos o artefactos locales.
-- [ ] Crear el repositorio privado y configurar `origin`.
-- [ ] Crear el commit inicial y hacer push.
+- [x] Confirmar la cuenta autenticada y que el nombre del repositorio está disponible.
+- [x] Revisar los archivos que se incluirán y evitar publicar secretos o artefactos locales.
+- [x] Crear el repositorio privado y configurar `origin`.
+- [x] Crear el commit inicial y hacer push.
