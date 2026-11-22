@@ -18,6 +18,8 @@ El código propio de keyjson, incluido el cliente Python, se distribuye bajo la 
 - **TTL:** cada entrada puede llevar un vencimiento basado en `CLOCK_MONOTONIC`. Se comprueba la fecha más próxima en cada operación y solo se recorre la tabla cuando llega ese vencimiento; las claves sin TTL no consultan el reloj. No hay hilo de fondo.
 - **Valores:** se acepta cualquier valor JSON válido (incluidos objetos, arrays, cadenas, números, booleanos y `null`). `yyjson` lo valida y se guarda como JSON compacto serializado; no se retiene un árbol DOM por entrada. El almacén y sus datos son volátiles y desaparecen al terminar el proceso.
 - **HTTP:** HTTP/1.1 sobre sockets POSIX no bloqueantes y `poll()`. Un único hilo mantiene el almacén seguro sin locks; se atienden hasta 64 conexiones y se reutilizan conexiones persistentes. Se aceptan solicitudes con `Content-Length`; `Transfer-Encoding`/chunked no está implementado.
+- **Swagger/OpenAPI:** `GET /docs` sirve Swagger UI y `GET /openapi.json` entrega un documento OpenAPI 3 integrado en el binario. La interfaz carga CSS/JavaScript desde jsDelivr (`swagger-ui-dist` v5); el navegador necesita acceso a Internet para mostrarla. No añade dependencias al servidor C.
+- **Favicon:** `favicon.ico` es un icono ICO de 32×32 embebido en el binario y servido en `/favicon.ico`; Swagger UI lo enlaza desde su HTML.
 - **Límites:** cabeceras de hasta 16 KiB, cuerpo de hasta 1 MiB y clave UTF-8 de hasta 1024 bytes después de decodificar escapes URL. Se cierra una conexión inactiva tras 30 segundos; una solicitud incompleta tiene un plazo de recepción absoluto de 30 segundos, que no se reinicia al recibir más bytes. El envío de la respuesta anterior no consume el plazo de una solicitud posterior en la misma conexión. No se admiten query strings.
 - **JSON de respuesta:** `yyjson` genera errores, resultados CRUD, lista de claves y estadísticas. `GET /keys/{key}` devuelve directamente el JSON compacto previamente validado, no una cadena JSON escapada.
 - **Dependencia:** `yyjson` 0.10.0 está vendorizado en `third_party/yyjson/` con su licencia MIT; no se requiere descargarlo ni instalar un paquete del sistema para compilar.
@@ -33,6 +35,9 @@ El código propio de keyjson, incluido el cliente Python, se distribuye bajo la 
 | `DELETE` | `/keys/{key}` | Elimina la clave y devuelve `{"deleted":true}`; `404` si no existe. |
 | `GET` | `/keys` | Array JSON con las claves (el orden no está garantizado). |
 | `GET` | `/stats` | Métricas: cantidad de claves, capacidad, bytes almacenados y contadores de operaciones. |
+| `GET` | `/docs` | Interfaz interactiva Swagger UI (también `/docs/`). |
+| `GET` | `/openapi.json` | Especificación OpenAPI 3 de la API. |
+| `GET` | `/favicon.ico` | Icono ICO del servicio, también enlazado desde `/docs`. |
 
 Ejemplos (con el contenedor iniciado en `127.0.0.1:8080`):
 
@@ -49,6 +54,9 @@ curl -i -X PUT http://127.0.0.1:8080/keys/temporary \
 curl -i http://127.0.0.1:8080/keys/greeting
 curl -i http://127.0.0.1:8080/keys
 curl -i http://127.0.0.1:8080/stats
+curl -i http://127.0.0.1:8080/docs
+curl -i http://127.0.0.1:8080/openapi.json
+curl -i http://127.0.0.1:8080/favicon.ico
 curl -i -X DELETE http://127.0.0.1:8080/keys/greeting
 ```
 
@@ -82,6 +90,8 @@ include/kv.h       API del almacén
 include/http.h     API del servidor
 src/kv.c           Tabla hash y operaciones CRUD
 src/http.c         Parser HTTP, rutas REST y serialización JSON
+src/favicon.h      ICO embebido para servir desde el binario
+favicon.ico        Favicon 32×32 del proyecto
 src/main.c         Configuración y punto de entrada
 tests/test_kv.c    Pruebas funcionales del almacén
 tests/test_http_robustness.c Corpus HTTP local de robustez
@@ -267,3 +277,62 @@ PYTHONPATH=python ./.venv/bin/python -m unittest discover -s python/tests -v
 - [x] Revisar los archivos que se incluirán y evitar publicar secretos o artefactos locales.
 - [x] Crear el repositorio privado y configurar `origin`.
 - [x] Crear el commit inicial y hacer push.
+
+## Plan: documentación Swagger en `/docs`
+
+- Publicar una especificación OpenAPI 3 en `/openapi.json` con los endpoints CRUD, listado, estadísticas, TTL y respuestas de error.
+- Añadir Swagger UI en `/docs` con assets versionados servidos desde CDN y una URL relativa al OpenAPI; no añadir dependencias de compilación o ejecución al servidor.
+- Cubrir las nuevas rutas con pruebas HTTP y documentar el acceso y el requisito de red del navegador para cargar Swagger UI.
+
+### Checklist
+
+- [x] Implementar y validar la especificación OpenAPI.
+- [x] Servir `/docs` y `/openapi.json` con métodos, tipos MIME y respuestas correctos.
+- [x] Añadir pruebas, actualizar el README y validar compilación/pruebas.
+
+## Plan: arrancar la app con Swagger
+
+- Comprobar si ya hay un contenedor o servicio escuchando en el puerto 8080; no reiniciar una instancia activa para conservar sus datos en memoria.
+- Si no está activa, iniciar `localhost/keyjson:dev` en Podman rootless, publicando solo en `127.0.0.1:8080`.
+- Verificar `/stats`, `/docs` y `/openapi.json`.
+
+### Checklist
+
+- [x] Comprobar contenedores e imagen disponibles.
+- [x] Arrancar la app si es necesario, sin interrumpir una instancia activa.
+- [x] Verificar los tres endpoints.
+
+## Plan: reparar Swagger UI en navegador
+
+- Revisar la inicialización de Swagger UI y confirmar que `/openapi.json` sigue siendo válido.
+- Corregir la carga de recursos/presets para que la página se renderice en navegadores, manteniendo el servidor ligero.
+- Probar la respuesta de `/docs`, los recursos CDN y el documento; antes de reemplazar el contenedor activo, comprobar `/stats` para evitar pérdida de datos en memoria.
+
+### Checklist
+
+- [x] Corregir la inicialización de Swagger UI y documentar cualquier requisito externo.
+- [x] Validar `/docs`, el OpenAPI, los recursos CDN y el contenedor actualizado.
+
+## Plan: añadir favicon
+
+- Crear `favicon.ico` con un icono sencillo acorde al tema oscuro y al almacén key-value.
+- Incluirlo en el binario del servidor y servir `GET /favicon.ico` con el MIME correcto, sin depender de archivos en tiempo de ejecución.
+- Enlazarlo desde Swagger UI y añadir pruebas HTTP para la ruta y el formato ICO.
+
+### Checklist
+
+- [x] Crear el archivo ICO y el recurso embebido para el binario.
+- [x] Servir el favicon y enlazarlo desde `/docs`.
+- [x] Validar formato, compilación y tests HTTP.
+
+## Plan: crear Pull Request para Swagger UI y favicon
+
+- Revisar los cambios locales pendientes para incluir la reparación de Swagger UI y el favicon en una rama de trabajo, sin tocar `master`.
+- Validar el estado y crear un commit con identidad del propietario del repositorio.
+- Publicar la rama en GitHub, crear un PR contra `master` y verificar su URL y estado.
+
+### Checklist
+
+- [ ] Revisar cambios pendientes y confirmar tests.
+- [ ] Crear commit y subir rama de trabajo.
+- [ ] Crear y verificar el Pull Request.

@@ -25,7 +25,7 @@ $(BUILD_DIR)/main.o: src/main.c include/http.h include/kv.h | $(BUILD_DIR)
 $(BUILD_DIR)/kv.o: src/kv.c include/kv.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(STRICT_CFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
-$(BUILD_DIR)/http.o: src/http.c include/http.h include/kv.h third_party/yyjson/yyjson.h | $(BUILD_DIR)
+$(BUILD_DIR)/http.o: src/http.c src/favicon.h include/http.h include/kv.h third_party/yyjson/yyjson.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(STRICT_CFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD_DIR)/yyjson.o: third_party/yyjson/yyjson.c third_party/yyjson/yyjson.h | $(BUILD_DIR)
